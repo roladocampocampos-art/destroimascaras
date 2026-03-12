@@ -59,6 +59,7 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
+            display: block;
         }
 
         #canvas {
@@ -67,6 +68,7 @@
             left: 0;
             width: 100%;
             height: 100%;
+            pointer-events: none;
         }
 
         .controls {
@@ -74,6 +76,7 @@
             display: flex;
             gap: 10px;
             justify-content: center;
+            flex-wrap: wrap;
         }
 
         button {
@@ -86,9 +89,10 @@
             transition: all 0.3s ease;
             background: white;
             color: #667eea;
+            min-width: 120px;
         }
 
-        button:hover {
+        button:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(0,0,0,0.3);
         }
@@ -96,7 +100,6 @@
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
-            transform: none;
         }
 
         .ranking-section {
@@ -108,6 +111,7 @@
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
             display: flex;
             flex-direction: column;
+            max-height: 600px;
         }
 
         .ranking-section h2 {
@@ -119,7 +123,21 @@
         .ranking-container {
             flex: 1;
             overflow-y: auto;
-            max-height: 500px;
+            padding-right: 5px;
+        }
+
+        .ranking-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .ranking-container::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        .ranking-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
         }
 
         .ranking-item {
@@ -189,9 +207,10 @@
             text-align: center;
             color: white;
             margin-top: 20px;
-            padding: 10px;
+            padding: 15px;
             background: rgba(0, 0, 0, 0.3);
             border-radius: 10px;
+            font-weight: 500;
         }
 
         .loading {
@@ -201,8 +220,7 @@
             height: 100px;
         }
 
-        .loading::after {
-            content: "";
+        .loading-spinner {
             width: 50px;
             height: 50px;
             border: 5px solid #f3f3f3;
@@ -228,19 +246,32 @@
         .history-title {
             font-size: 1.2em;
             margin-bottom: 10px;
+            font-weight: 600;
         }
 
         .history-items {
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
+            min-height: 40px;
         }
 
         .history-item {
             background: rgba(255, 255, 255, 0.2);
-            padding: 5px 10px;
-            border-radius: 15px;
+            padding: 8px 15px;
+            border-radius: 20px;
             font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .error-message {
+            color: #ff6b6b;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -251,7 +282,7 @@
         <div class="main-content">
             <div class="video-section">
                 <div class="video-container">
-                    <video id="video" autoplay muted></video>
+                    <video id="video" autoplay playsinline muted></video>
                     <canvas id="canvas"></canvas>
                 </div>
                 <div class="controls">
@@ -260,14 +291,17 @@
                     <button id="resetBtn" onclick="resetRanking()">🔄 Resetar Ranking</button>
                 </div>
                 <div id="status" class="status">
-                    Clique em "Iniciar Câmera" para começar
+                    ⏳ Carregando modelos...
                 </div>
+                <div id="errorDisplay" class="error-message" style="display: none;"></div>
             </div>
 
             <div class="ranking-section">
                 <h2>🏆 Ranking de Emoções</h2>
                 <div id="ranking" class="ranking-container">
-                    <div class="loading"></div>
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -288,6 +322,7 @@
         const statusEl = document.getElementById('status');
         const rankingEl = document.getElementById('ranking');
         const historyEl = document.getElementById('history');
+        const errorDisplay = document.getElementById('errorDisplay');
 
         // Estado da aplicação
         let isRunning = false;
@@ -295,6 +330,7 @@
         let detectionInterval = null;
         let emotionsHistory = [];
         const maxHistory = 10;
+        let videoStream = null;
 
         // Dados do ranking
         const emotions = {
@@ -317,69 +353,136 @@
             surprised: 0
         };
 
+        // Mostrar erro
+        function showError(message) {
+            errorDisplay.textContent = message;
+            errorDisplay.style.display = 'block';
+            statusEl.textContent = '❌ Erro: ' + message;
+        }
+
+        // Limpar erro
+        function clearError() {
+            errorDisplay.style.display = 'none';
+        }
+
         // Carregar modelos do Face-API
         async function loadModels() {
             statusEl.textContent = '📥 Carregando modelos...';
-            rankingEl.innerHTML = '<div class="loading"></div>';
+            rankingEl.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
             
             try {
-                const modelUrl = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/models';
+                // Usando CDN alternativa para os modelos
+                const modelUrl = 'https://justadudewhohacks.github.io/face-api.js/models';
                 
+                console.log('Carregando modelos...');
                 await faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl);
+                console.log('TinyFaceDetector carregado');
+                
                 await faceapi.nets.faceExpressionNet.loadFromUri(modelUrl);
+                console.log('FaceExpressionNet carregado');
                 
                 modelsLoaded = true;
-                statusEl.textContent = '✅ Modelos carregados! Clique em "Iniciar Câmera"';
+                statusEl.innerHTML = '✅ Modelos carregados! <br> Clique em "Iniciar Câmera" para começar';
+                clearError();
+                
+                // Mostrar ranking vazio
                 updateRanking();
             } catch (error) {
-                console.error('Erro ao carregar modelos:', error);
-                statusEl.textContent = '❌ Erro ao carregar modelos. Recarregue a página.';
-                rankingEl.innerHTML = '<p style="color: white; text-align: center;">Erro ao carregar modelos</p>';
+                console.error('Erro detalhado ao carregar modelos:', error);
+                showError('Erro ao carregar modelos. Verifique sua conexão com a internet.');
+                statusEl.textContent = '❌ Erro ao carregar modelos. Tente recarregar a página.';
+                rankingEl.innerHTML = '<p style="color: white; text-align: center; padding: 20px;">❌ Falha ao carregar modelos</p>';
             }
         }
 
         // Iniciar vídeo da câmera
         async function startVideo() {
+            clearError();
+            
             if (!modelsLoaded) {
-                statusEl.textContent = '⏳ Aguarde os modelos carregarem...';
+                showError('Aguarde os modelos carregarem primeiro...');
                 return;
             }
 
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
+                statusEl.textContent = '📷 Solicitando acesso à câmera...';
+                
+                const constraints = {
+                    video: {
                         width: { ideal: 640 },
                         height: { ideal: 480 },
-                        facingMode: 'user'
-                    } 
+                        facingMode: 'user',
+                        frameRate: { ideal: 30 }
+                    }
+                };
+                
+                videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                video.srcObject = videoStream;
+                
+                // Aguardar o vídeo começar a reproduzir
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play()
+                            .then(resolve)
+                            .catch(e => {
+                                console.error('Erro ao dar play:', e);
+                                resolve();
+                            });
+                    };
                 });
                 
-                video.srcObject = stream;
+                // Configurar canvas
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
                 
-                video.onloadedmetadata = () => {
-                    video.play();
-                    isRunning = true;
-                    startBtn.disabled = true;
-                    stopBtn.disabled = false;
-                    statusEl.textContent = '🔍 Detectando emoções...';
-                    
-                    // Iniciar detecção
-                    startDetection();
-                };
+                isRunning = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusEl.innerHTML = '✅ Câmera ativa! <br> 🔍 Detectando emoções...';
+                
+                // Pequeno delay para garantir que o vídeo está rodando
+                setTimeout(() => {
+                    if (isRunning) {
+                        startDetection();
+                    }
+                }, 500);
+                
             } catch (error) {
-                console.error('Erro ao acessar câmera:', error);
-                statusEl.textContent = '❌ Erro ao acessar câmera. Verifique as permissões.';
+                console.error('Erro detalhado ao acessar câmera:', error);
+                
+                let errorMessage = 'Erro ao acessar câmera. ';
+                if (error.name === 'NotAllowedError') {
+                    errorMessage += 'Permissão negada. Permita o acesso à câmera.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage += 'Nenhuma câmera encontrada.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage += 'Câmera está sendo usada por outro aplicativo.';
+                } else {
+                    errorMessage += 'Verifique se sua câmera está funcionando.';
+                }
+                
+                showError(errorMessage);
+                statusEl.textContent = '❌ ' + errorMessage;
+                stopVideo();
             }
         }
 
         // Parar vídeo
         function stopVideo() {
+            isRunning = false;
+            
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => {
+                    track.stop();
+                });
+                videoStream = null;
+            }
+            
             if (video.srcObject) {
-                video.srcObject.getTracks().forEach(track => track.stop());
                 video.srcObject = null;
             }
             
-            isRunning = false;
             startBtn.disabled = false;
             stopBtn.disabled = true;
             statusEl.textContent = '⏹️ Câmera parada';
@@ -399,36 +502,42 @@
         }
 
         // Iniciar detecção de emoções
-        function startDetection() {
+        async function startDetection() {
             if (detectionInterval) {
                 clearInterval(detectionInterval);
             }
 
             detectionInterval = setInterval(async () => {
-                if (!isRunning || !modelsLoaded) return;
+                if (!isRunning || !modelsLoaded || !video.videoWidth) return;
 
                 try {
+                    // Detectar faces
                     const detections = await faceapi.detectAllFaces(
                         video, 
-                        new faceapi.TinyFaceDetectorOptions()
+                        new faceapi.TinyFaceDetectorOptions({
+                            inputSize: 224,
+                            scoreThreshold: 0.5
+                        })
                     ).withFaceExpressions();
 
+                    // Desenhar no canvas
                     drawDetections(detections);
 
-                    if (detections.length > 0) {
+                    // Atualizar dados se houver detecções
+                    if (detections && detections.length > 0) {
                         const expressions = detections[0].expressions;
                         updateEmotionData(expressions);
                         addToHistory(expressions);
                     } else {
-                        // Resetar emoções atuais se nenhum rosto detectado
                         resetCurrentEmotions();
                     }
                     
                     updateRanking();
+                    
                 } catch (error) {
                     console.error('Erro na detecção:', error);
                 }
-            }, 100); // Atualizar a cada 100ms
+            }, 200); // Reduzido para 200ms para melhor performance
         }
 
         // Desenhar detecções no canvas
@@ -436,34 +545,48 @@
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            if (detections.length > 0) {
-                // Redimensionar canvas para corresponder ao vídeo
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
+            if (detections && detections.length > 0) {
+                // Ajustar tamanho do canvas se necessário
+                if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                }
 
-                // Desenhar caixa ao redor do rosto
-                const box = detections[0].detection.box;
+                const detection = detections[0];
+                const box = detection.detection.box;
+                
+                // Desenhar retângulo ao redor do rosto
                 ctx.strokeStyle = '#00ff00';
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 3;
                 ctx.strokeRect(box.x, box.y, box.width, box.height);
 
                 // Desenhar expressões
-                const expressions = detections[0].expressions;
+                const expressions = detection.expressions;
                 let y = box.y - 10;
                 
-                Object.entries(expressions).forEach(([emotion, probability]) => {
+                // Ordenar por probabilidade
+                const sortedExpressions = Object.entries(expressions)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 3); // Mostrar apenas top 3
+                
+                ctx.font = 'bold 14px Arial';
+                ctx.shadowColor = 'black';
+                ctx.shadowBlur = 4;
+                
+                sortedExpressions.forEach(([emotion, probability]) => {
                     if (probability > 0.1) {
                         const percentage = (probability * 100).toFixed(1);
                         ctx.fillStyle = emotions[emotion]?.color || '#ffffff';
-                        ctx.font = '14px Arial';
                         ctx.fillText(
-                            `${emotion}: ${percentage}%`, 
+                            `${emotions[emotion]?.emoji || '😶'} ${emotion}: ${percentage}%`, 
                             box.x, 
                             y
                         );
-                        y -= 20;
+                        y -= 25;
                     }
                 });
+                
+                ctx.shadowBlur = 0;
             }
         }
 
@@ -471,7 +594,7 @@
         function updateEmotionData(expressions) {
             currentEmotions = { ...expressions };
             
-            // Encontrar emoção dominante
+            // Encontrar emoção dominante (acima de 40% para contar)
             let maxEmotion = null;
             let maxValue = 0;
             
@@ -482,7 +605,7 @@
                 }
             });
 
-            if (maxEmotion && maxValue > 0.5) {
+            if (maxEmotion && maxValue > 0.4) {
                 emotions[maxEmotion].count++;
             }
         }
@@ -525,8 +648,13 @@
 
         // Atualizar histórico visual
         function updateHistory() {
+            if (emotionsHistory.length === 0) {
+                historyEl.innerHTML = '<div class="history-item">Nenhuma emoção detectada ainda</div>';
+                return;
+            }
+            
             historyEl.innerHTML = emotionsHistory.map(item => `
-                <div class="history-item" style="background: ${emotions[item.emotion].color}80">
+                <div class="history-item" style="background: ${emotions[item.emotion]?.color || '#808080'}80">
                     ${item.emoji} ${(item.value * 100).toFixed(0)}%
                 </div>
             `).join('');
@@ -539,6 +667,11 @@
 
             const total = Object.values(emotions).reduce((sum, e) => sum + e.count, 0);
 
+            if (total === 0) {
+                rankingEl.innerHTML = '<p style="color: white; text-align: center; padding: 20px;">🎯 Nenhuma emoção detectada ainda<br><small>Olhe para a câmera e faça expressões!</small></p>';
+                return;
+            }
+
             const rankingHTML = sortedEmotions.map(([emotion, data]) => {
                 const percentage = total > 0 ? (data.count / total * 100).toFixed(1) : 0;
                 const currentProb = currentEmotions[emotion] || 0;
@@ -548,7 +681,7 @@
                     <div class="ranking-item">
                         <span class="emoji">${data.emoji}</span>
                         <div class="emotion-info">
-                            <div style="display: flex; justify-content: space-between;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                                 <span class="emotion-name">${emotion}</span>
                                 <span class="count">${data.count}</span>
                             </div>
@@ -558,9 +691,9 @@
                                 </div>
                                 <span class="percentage">${percentage}%</span>
                             </div>
-                            ${currentProb > 0 ? `
-                                <div style="font-size: 12px; margin-top: 5px;">
-                                    Atual: ${currentPercentage}%
+                            ${currentProb > 0.1 ? `
+                                <div style="font-size: 12px; margin-top: 5px; color: #ffd700;">
+                                    Agora: ${currentPercentage}%
                                 </div>
                             ` : ''}
                         </div>
@@ -568,7 +701,7 @@
                 `;
             }).join('');
 
-            rankingEl.innerHTML = rankingHTML || '<p style="color: white; text-align: center;">Nenhuma emoção detectada ainda</p>';
+            rankingEl.innerHTML = rankingHTML;
         }
 
         // Resetar ranking
@@ -581,11 +714,13 @@
             resetCurrentEmotions();
             updateHistory();
             updateRanking();
-            statusEl.textContent = '📊 Ranking resetado!';
+            statusEl.innerHTML = '📊 Ranking resetado!<br> Continue fazendo expressões!';
         }
 
-        // Iniciar carregamento dos modelos
-        loadModels();
+        // Iniciar carregamento dos modelos quando a página carregar
+        window.addEventListener('load', () => {
+            loadModels();
+        });
 
         // Limpar ao fechar
         window.addEventListener('beforeunload', () => {
